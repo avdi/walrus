@@ -43,26 +43,31 @@ rmpid() {
     rm -f pids/$1
 }
 
-handler() {
-    local req=$1
-    local res=$2
-    echo "Handler running on $req $res"
-    local input
-    read input <$req
-    echo "Got $input"
-    echo "Replying"
-    printf "HTTP/1.1 200 OK\r\n\r\nHi there!" > $res
-    echo "Handler done"
-}
-
 handle_request() {
     local ncpid=$1
     local req_line
-    read req_line
-    say "Received ${req_line}"
+    read -a req_line
+    say "Received ${req_line[@]}"
     send main "continue"
+    local method=${req_line[0]}
+    local path=${req_line[1]}
+    say "method: ${method}"
+    say "path: ${path}"
     say "Serving response"
-    printf "HTTP/1.1 200 OK\r\n\r\nHi! I received: ${req_line}"
+    case ${path} in
+        /)
+            printf "HTTP/1.1 200 OK\r\n"
+            printf "Content-Type: text/html\r\n\r\n"
+            cat index.html
+            ;;
+        /echo/*)
+            printf "HTTP/1.1 200 OK\r\n\r\nHi! You requested ${method} ${path}"
+            ;;
+
+        *) 
+            printf "HTTP/1.1 404 Not found\r\n\r\n Not found"
+            ;;
+    esac
     say "Finished handling request" 
 }
 
@@ -72,19 +77,12 @@ serve_with_coproc() {
     local pid=$$
     coproc nc ( netcat -C -4 -v -l ${port:-${default_port}} )
     mkpid ${nc_PID}
-    # coproc handler ( handle_request $$ )
-    # netcat -C -4 -v -l ${port:-${default_port}} <&${handler[0]} >&${handler[1]}
-    # coproc handler ( handle_request ${nc_PID} ) <&${nc[0]} >&${nc[1]}
     handle_request ${nc_PID} <&${nc[0]} >&${nc[1]}
     # close file descriptors
     eval "exec ${nc[1]}>&-"     
     eval "exec ${nc[0]}<&-"
     wait ${nc_PID}
 }
-
-say "I am the walrus"
-
-setup
 
 agar() {
     local name=$1
@@ -113,10 +111,14 @@ main() {
         say "Waiting for connection"
         serve_with_coproc &
         say "Waiting to start another server"
-        say "Reading form ${queue}"
         read < ${queue}
     done
 }
+
+say "I am the walrus"
+
+setup
+
 agar main
 
 wait
