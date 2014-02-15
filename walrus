@@ -37,7 +37,7 @@ setup() {
 }
 
 dbexec() {
-    psql -p 5433 -f - walrus
+    psql -p 5433 -f - $* walrus
 }
 
 setup_schema() {
@@ -110,6 +110,9 @@ handle_request() {
                     ;;
             esac
             ;;
+        /recent)
+            handle_recent
+            ;;
         /echo/*)
             printf "HTTP/1.1 200 OK\r\n\r\nHi! You requested ${method} ${path}"
             ;;
@@ -121,6 +124,23 @@ handle_request() {
     say "Finished handling request" 
 }
 
+# There is a nasty chicken/egg problem here. We can't always respond
+# until we see the whole request. But until we respond and close the
+# filehandles, the input filehandle will not be in an EOF state. Which
+# means things like cat(1) and sed(1) will just hang on it forever.
+#
+# We can read lines off it one at a time with 'read'... except that
+# the body may not end with a newline. And read doesn't return until
+# it sees a newline. So it hangs without returning the body, even
+# though a body has been sent.
+#
+# To get around this, we isolate the Content-Length from the
+# headers. Then we use the -N version of read to read *exactly* the
+# length of the body, ignoring newlines.
+#
+# Of course, this means that without Content-Length, we're
+# screwed. But that's just the sort of thing that happens when you
+# decide to write a webserver based on netcat.
 get_request_body() {
     local line
     local length
@@ -165,6 +185,17 @@ handle_updates() {
         sleep 1
         printf "data: This is message ${n}\n\n"
     done
+}
+
+handle_recent() {
+    say "Serving recent messages"
+    local body=`tempfile`
+    printf "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n" >> ${body}
+    local query="WITH rows AS (SELECT * from messages ORDER BY posted_at LIMIT 10)
+                 SELECT row_to_json(rows) FROM rows;"
+    local xform="[ .[] | {id, posted_at, user: .content.user, text: .content.text}]"
+    echo "${query}" | dbexec -A -q -t | jq -s "${xform}" >> ${body}
+    cat ${body}
 }
 
 serve_with_coproc() {
