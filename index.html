@@ -5,17 +5,22 @@
     <script type="text/javascript" src="/jquery-1.11.0.min.js"></script>
     <script type="text/javascript" src="/walrus.js"></script>
     <style type="text/css">
-      
+      .user { display: inline-block; width: 7em; font-weight: bold; }
+      .text { display: inline-block; }
     </style>
   </head>
   <body>    
-    <h1>Welcome to Walrus</h1>
-    <form method="POST" action="/messages" id="msg-form">
-      <p>
-        <input type="text" name="text" size="80" id="msg-text"/>
-        <br/>
-        <input type="submit" value="Send"/>
-      </p>
-    </form>
+    <div id="content">
+      <h1>Welcome to Walrus</h1>    
+      <div id="history">
+      </div>
+      <form method="POST" action="/messages" id="msg-form">
+        <p>
+          <input type="text" name="text" size="80" id="msg-text"/>
+          <br/>
+          <input type="submit" value="Send"/>
+        </p>
+      </form>
+    </div>
   </body>
 </html>

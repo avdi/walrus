@@ -15,17 +15,34 @@ $(function(){
     });
     return o;
   };
+  
 
-  var source = new EventSource('/updates');
-  source.addEventListener('message', function(e) {
-    console.log(e.data);
-  });
   if(!localStorage.username) {
     var username = prompt("What is your name?", "Anonymous");
     if(username) {
       localStorage.username = username;
     }
   }
+
+  var replaceHistory = function(messages) {
+    $('#history').empty();
+    $.each(messages, function() {
+      var $message = $('<div>',{"class": "message"})
+        .append($('<span>', {"class": "user", text: this["user"]}))
+        .append($('<span>', {"class": "text", text: this["text"]}));
+      $('#history').append($message);
+    });
+  };
+
+  $.get('/recent', function(data) {
+    replaceHistory(data);
+    var source = new EventSource('/updates');
+    source.addEventListener('message', function(event) {
+      console.log(event.data);
+      replaceHistory(JSON.parse(event.data));
+    });
+  });
+
   console.log("Username is: " + localStorage.username);
   $('#msg-form').submit(function(event){
     $form        = $(event.target);
@@ -34,7 +51,7 @@ $(function(){
     json         = JSON.stringify(data);
     action       = $form.attr('action');
     $.post(action, json, function() {
-      $form.get().reset();
+      $form.find("input[type=text]").val("");
     });
     event.preventDefault();
   });

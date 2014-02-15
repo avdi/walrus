@@ -24,6 +24,7 @@ setup() {
     echo "Setting up"
     rm -rf fifos
     mkdir -p fifos
+    mkdir -p fifos/subscribers
     mkdir -p pids
     for pid in `ls pids`; do
         if ps ${pid} > /dev/null; then
@@ -62,7 +63,7 @@ rmpid() {
 }
 
 handle_request() {
-    local ncpid=$1
+    local ncpid="$1"
     local req_line
     read -a req_line
     say "Received ${req_line[@]}"
@@ -97,7 +98,7 @@ handle_request() {
             rm ${body}
             ;;
         /updates)
-            handle_updates
+            handle_updates "$ncpid"
             ;;
         /messages)
             # upcase before comparing
@@ -175,27 +176,41 @@ handle_post_message() {
     say "${cmd}"
     echo "${cmd}" | dbexec
     printf "HTTP/1.1 201 Accepted\r\n\r\n"
+    for fifo in `ls fifos/subscribers/*`; do
+        say "Notifying ${fifo}"
+        echo "ping" > ${fifo}
+    done
     say "Finished handling message post"
 }
 
 handle_updates() {
+    local ncpid="$1"
+    local fifo=fifos/subscribers/${ncpid}
+    say "Subscriber ${fifo} serving events"
     printf "HTTP/1.1 200 OK\r\n"
     printf "Content-Type: text/event-stream\r\n\r\n"
-    for n in {00..60}; do
-        sleep 1
-        printf "data: This is message ${n}\n\n"
+    mkfifo ${fifo}
+    while read -t 30 message < ${fifo}; do
+        say "Subscriber ${fifo} sending client event"
+        printf "data: $(recent_messages_json)\n\n"
     done
+    rm -f ${fifo}
+    say "Subscriber ${fifo} finished"
 }
 
 handle_recent() {
     say "Serving recent messages"
     local body=`tempfile`
     printf "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n" >> ${body}
+    recent_messages_json >> ${body}
+    cat ${body}
+}
+
+recent_messages_json() {
     local query="WITH rows AS (SELECT * from messages ORDER BY posted_at LIMIT 10)
                  SELECT row_to_json(rows) FROM rows;"
     local xform="[ .[] | {id, posted_at, user: .content.user, text: .content.text}]"
-    echo "${query}" | dbexec -A -q -t | jq -s "${xform}" >> ${body}
-    cat ${body}
+    echo "${query}" | dbexec -A -q -t | jq -s -c "${xform}"
 }
 
 serve_with_coproc() {
