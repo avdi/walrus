@@ -1,6 +1,7 @@
 #!/bin/bash
 
 default_port=8080
+declare -A content_types=([js]=text/javascript [html]=text/html)
 
 # Set up a logging system that can route around output redirection
 logfd=10                        # FD #10 is probably free
@@ -54,11 +55,22 @@ handle_request() {
     say "method: ${method}"
     say "path: ${path}"
     say "Serving response"
+    if [ "${path}" == "/" ]; then
+        path="/index.html"
+    fi
     case ${path} in
-        /)
+        /index.html | /walrus.js | /jquery-1.11.0.min.js)
+            local file=`basename ${path}`
+            local length=`wc -c < ${file}`
+            local ext=${file##*.}
+            local type=${content_types[${ext}]}
             printf "HTTP/1.1 200 OK\r\n"
-            printf "Content-Type: text/html\r\n\r\n"
-            cat index.html
+            printf "Content-Type: ${type}\r\n"
+            printf "Content-Length: ${length}\r\n\r\n"
+            cat ${file}
+            ;;
+        /updates)
+            handle_updates
             ;;
         /echo/*)
             printf "HTTP/1.1 200 OK\r\n\r\nHi! You requested ${method} ${path}"
@@ -71,11 +83,20 @@ handle_request() {
     say "Finished handling request" 
 }
 
+handle_updates() {
+    printf "HTTP/1.1 200 OK\r\n"
+    printf "Content-Type: text/event-stream\r\n\r\n"
+    for n in {00..60}; do
+        sleep 1
+        printf "data: This is message ${n}\n\n"
+    done
+}
+
 serve_with_coproc() {
     local handler
     local nc
     local pid=$$
-    coproc nc ( netcat -C -4 -v -l ${port:-${default_port}} )
+    coproc nc ( buffer | netcat -C -4 -v -l ${port:-${default_port}} )
     mkpid ${nc_PID}
     handle_request ${nc_PID} <&${nc[0]} >&${nc[1]}
     # close file descriptors
