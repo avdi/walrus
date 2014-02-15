@@ -33,6 +33,23 @@ setup() {
         echo "Cleaning up pidfile pids/${pid}"
         rm pids/${pid}
     done
+    setup_schema || exit 1
+}
+
+dbexec() {
+    psql -p 5433 -f - walrus
+}
+
+setup_schema() {
+    say "Setting up schema"
+    dbexec <<EOF
+DROP TABLE IF EXISTS messages;
+CREATE TABLE messages (
+    id        serial PRIMARY KEY,
+    content   json,
+    posted_at timestamptz DEFAULT now()
+);
+EOF
 }
 
 mkpid() {
@@ -133,9 +150,12 @@ get_request_body() {
 
 handle_post_message() {
     say "Handling message post"
-    say "Message body: $(cat)"
+    body=`cat | sed "s/'/''/g"`
+    cmd="INSERT INTO messages (content) VALUES('${body}');"
+    say "${cmd}"
+    echo "${cmd}" | dbexec
+    printf "HTTP/1.1 201 Accepted\r\n\r\n"
     say "Finished handling message post"
-    printf "HTTP/1.1 201 Accepted"
 }
 
 handle_updates() {
