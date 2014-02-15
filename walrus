@@ -1,8 +1,15 @@
 #!/bin/bash
 
 default_port=8080
-logfd=10
+
+# Set up a logging system that can route around output redirection
+logfd=10                        # FD #10 is probably free
 eval "exec ${logfd}>&0"         # duplicate stdout 
+
+# Logs its argument
+say() {
+    echo "$1" >&${logfd}
+}
 
 while getopts "p:" opt; do
     case ${opt} in
@@ -11,10 +18,6 @@ while getopts "p:" opt; do
             port=${OPTARG} ;;
     esac
 done
-
-say() {
-    echo "$1" >&${logfd}
-}
 
 setup() {
     echo "Setting up"
@@ -25,7 +28,6 @@ setup() {
         if ps ${pid} > /dev/null; then
             echo "Killing ${pid}"
             kill ${pid}
-            wait ${pid}
         fi
         echo "Cleaning up pidfile pids/${pid}"
         rm pids/${pid}
@@ -35,6 +37,10 @@ setup() {
 mkpid() {
     mkdir -p pids
     touch pids/$1
+}
+
+rmpid() {
+    rm -f pids/$1
 }
 
 handler() {
@@ -53,12 +59,11 @@ handle_request() {
     local ncpid=$1
     local req_line
     read req_line
-    echo "Received ${req_line}" >&${logfd}
-    say "Sending signal to mainloop"
-    echo "continue" > fifos/mainloop
-    echo "Serving response" >&${logfd}
+    say "Received ${req_line}"
+    send main "continue"
+    say "Serving response"
     printf "HTTP/1.1 200 OK\r\n\r\nHi! I received: ${req_line}"
-    echo "Finished handling request" >&${logfd}
+    say "Finished handling request" 
 }
 
 serve_with_coproc() {
@@ -77,15 +82,41 @@ serve_with_coproc() {
     wait ${nc_PID}
 }
 
-echo "I am the walrus"
+say "I am the walrus"
 
 setup
 
-while true; do
-    echo "Starting new server"
-    mkfifo fifos/mainloop
-    serve_with_coproc &
-    echo "Waiting for signal to continue..."
-    read < fifos/mainloop
-done
-    
+agar() {
+    local name=$1
+    local args=${@:1}
+    local fifoname=fifos/${name}
+    if [ -f ${fifoname} ]; then
+        rm ${fifoname}
+    fi
+    mkfifo ${fifoname}
+    say "${name} is starting"
+    self=${name} queue=${fifoname} ${name} ${args[@]} &
+    local pid=$!
+    mkpid ${pid}
+    say "${name} has started"
+}
+
+send() {
+    local dest=$1
+    local message=${*:1}
+    say "${dest} <- '${message}'"
+    echo "${dest}" > fifos/${dest}
+}
+
+main() {
+    while true; do
+        say "Waiting for connection"
+        serve_with_coproc &
+        say "Waiting to start another server"
+        say "Reading form ${queue}"
+        read < ${queue}
+    done
+}
+agar main
+
+wait
