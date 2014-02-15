@@ -50,6 +50,7 @@ handle_request() {
     read -a req_line
     say "Received ${req_line[@]}"
     send main "continue"
+    # TODO use multiple variables to read instead
     local method=${req_line[0]}
     local path=${req_line[1]}
     say "method: ${method}"
@@ -64,6 +65,12 @@ handle_request() {
             local length=`wc -c < ${file}`
             local ext=${file##*.}
             local type=${content_types[${ext}]}
+
+            # for whatever reason browsers don't work so well with
+            # data sent piecemeal via netcat. We need to send it all
+            # in one big lump. Sticking buffer(1) in front of netcat
+            # worked well, but it broke SSE. So at least for now we're
+            # buffering up in a tempfile.
             local body=`tempfile`
             printf "HTTP/1.1 200 OK\r\n" >> ${body}
             printf "Content-Type: ${type}\r\n" >> ${body}
@@ -75,6 +82,17 @@ handle_request() {
         /updates)
             handle_updates
             ;;
+        /messages)
+            # upcase before comparing
+            case ${method^^} in
+                "POST")
+                    get_request_body | handle_post_message 
+                    ;;
+                *)
+                    printf "HTTP/1.1 405 Method Not Allowed\r\nAllow: POST\r\n\r\nMethod not allowed"
+                    ;;
+            esac
+            ;;
         /echo/*)
             printf "HTTP/1.1 200 OK\r\n\r\nHi! You requested ${method} ${path}"
             ;;
@@ -84,6 +102,40 @@ handle_request() {
             ;;
     esac
     say "Finished handling request" 
+}
+
+get_request_body() {
+    local line
+    local length
+    say "looking for request body"
+    while read key value; do
+        if [ "${key}" == "Content-Length:" ]; then
+            # Must filter out CR!
+            length=`echo "${value}" | sed 's/\r//'`
+            say "Content-Length is ${length}"
+        fi
+        if [ "${key}" == `printf "\r"` ]; then
+            say "found terminator"
+            break
+        fi
+        say "discarding ${key} ${value}"
+    done
+    if [ -n "${length}" ]; then
+        read -N "${length}" body
+        say "Found body:"
+        say "${body}"
+        echo ${body}
+    else
+        say "No Content-Length found"
+    fi
+    say "Finished looking for request body"
+}
+
+handle_post_message() {
+    say "Handling message post"
+    say "Message body: $(cat)"
+    say "Finished handling message post"
+    printf "HTTP/1.1 201 Accepted"
 }
 
 handle_updates() {
@@ -106,6 +158,7 @@ serve_with_coproc() {
     eval "exec ${nc[1]}>&-"     
     eval "exec ${nc[0]}<&-"
     wait ${nc_PID}
+    say "netcat process ${nc_PID} has finished"
 }
 
 agar() {
