@@ -64,10 +64,13 @@ handle_request() {
             local length=`wc -c < ${file}`
             local ext=${file##*.}
             local type=${content_types[${ext}]}
-            printf "HTTP/1.1 200 OK\r\n"
-            printf "Content-Type: ${type}\r\n"
-            printf "Content-Length: ${length}\r\n\r\n"
-            cat ${file}
+            local body=`tempfile`
+            printf "HTTP/1.1 200 OK\r\n" >> ${body}
+            printf "Content-Type: ${type}\r\n" >> ${body}
+            printf "Content-Length: ${length}\r\n\r\n" >> ${body}
+            cat ${file} >> ${body}
+            cat ${body}
+            rm ${body}
             ;;
         /updates)
             handle_updates
@@ -96,7 +99,7 @@ serve_with_coproc() {
     local handler
     local nc
     local pid=$$
-    coproc nc ( buffer | netcat -C -4 -v -l ${port:-${default_port}} )
+    coproc nc ( netcat -C -4 -v -l ${port:-${default_port}} )
     mkpid ${nc_PID}
     handle_request ${nc_PID} <&${nc[0]} >&${nc[1]}
     # close file descriptors
