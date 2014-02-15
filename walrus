@@ -1,0 +1,91 @@
+#!/bin/bash
+
+default_port=8080
+logfd=10
+eval "exec ${logfd}>&0"         # duplicate stdout 
+
+while getopts "p:" opt; do
+    case ${opt} in
+        p) 
+            echo "Setting port to ${OPTARG}"
+            port=${OPTARG} ;;
+    esac
+done
+
+say() {
+    echo "$1" >&${logfd}
+}
+
+setup() {
+    echo "Setting up"
+    rm -rf fifos
+    mkdir -p fifos
+    mkdir -p pids
+    for pid in `ls pids`; do
+        if ps ${pid} > /dev/null; then
+            echo "Killing ${pid}"
+            kill ${pid}
+            wait ${pid}
+        fi
+        echo "Cleaning up pidfile pids/${pid}"
+        rm pids/${pid}
+    done
+}
+
+mkpid() {
+    mkdir -p pids
+    touch pids/$1
+}
+
+handler() {
+    local req=$1
+    local res=$2
+    echo "Handler running on $req $res"
+    local input
+    read input <$req
+    echo "Got $input"
+    echo "Replying"
+    printf "HTTP/1.1 200 OK\r\n\r\nHi there!" > $res
+    echo "Handler done"
+}
+
+handle_request() {
+    local ncpid=$1
+    local req_line
+    read req_line
+    echo "Received ${req_line}" >&${logfd}
+    say "Sending signal to mainloop"
+    echo "continue" > fifos/mainloop
+    echo "Serving response" >&${logfd}
+    printf "HTTP/1.1 200 OK\r\n\r\nHi! I received: ${req_line}"
+    echo "Finished handling request" >&${logfd}
+}
+
+serve_with_coproc() {
+    local handler
+    local nc
+    local pid=$$
+    coproc nc ( netcat -C -4 -v -l ${port:-${default_port}} )
+    mkpid ${nc_PID}
+    # coproc handler ( handle_request $$ )
+    # netcat -C -4 -v -l ${port:-${default_port}} <&${handler[0]} >&${handler[1]}
+    # coproc handler ( handle_request ${nc_PID} ) <&${nc[0]} >&${nc[1]}
+    handle_request ${nc_PID} <&${nc[0]} >&${nc[1]}
+    # close file descriptors
+    eval "exec ${nc[1]}>&-"     
+    eval "exec ${nc[0]}<&-"
+    wait ${nc_PID}
+}
+
+echo "I am the walrus"
+
+setup
+
+while true; do
+    echo "Starting new server"
+    mkfifo fifos/mainloop
+    serve_with_coproc &
+    echo "Waiting for signal to continue..."
+    read < fifos/mainloop
+done
+    
