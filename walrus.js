@@ -25,6 +25,8 @@ $(function(){
   }
 
   var replaceHistory = function(messages) {
+    console.log(messages);
+    messages.reverse();
     $('#history').empty();
     $.each(messages, function() {
       var $message = $('<div>',{"class": "message"})
@@ -50,8 +52,9 @@ $(function(){
     data["user"] = localStorage.username;
     json         = JSON.stringify(data);
     action       = $form.attr('action');
-    $.post(action, json, function() {
+    $.post(action, json, function(data) {
       $form.find("input[type=text]").val("");
+      replaceHistory(data);
     });
     event.preventDefault();
   });

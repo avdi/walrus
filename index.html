@@ -5,19 +5,36 @@
     <script type="text/javascript" src="/jquery-1.11.0.min.js"></script>
     <script type="text/javascript" src="/walrus.js"></script>
     <style type="text/css">
-      .user { display: inline-block; width: 7em; font-weight: bold; }
-      .text { display: inline-block; }
+      body {
+        font-family: sans-serif;
+      }
+      #content {
+        width: 67%;
+        margin-left: auto;
+        margin-right: auto;
+        margin-bottom: 5ex;
+      }
+      #console {
+        position: fixed;
+        bottom: 0px;
+      }
+      #title { text-align: center; }
+      .user { display: inline-block; width: 5em; font-weight: bold; }
+      .user:after { content: ":"; }
+      .text { 
+        display: inline-block; 
+        font-family: serif;
+      }
     </style>
   </head>
   <body>    
     <div id="content">
-      <h1>Welcome to Walrus</h1>    
+      <h1 id="title">Walrus</h1>    
       <div id="history">
       </div>
       <form method="POST" action="/messages" id="msg-form">
-        <p>
-          <input type="text" name="text" size="80" id="msg-text"/>
-          <br/>
+        <p id="console">
+          <input type="text" name="text" size="60" id="msg-text"/>
           <input type="submit" value="Send"/>
         </p>
       </form>

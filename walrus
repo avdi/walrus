@@ -79,23 +79,7 @@ handle_request() {
     fi
     case ${path} in
         /index.html | /walrus.js | /jquery-1.11.0.min.js)
-            local file=`basename ${path}`
-            local length=`wc -c < ${file}`
-            local ext=${file##*.}
-            local type=${content_types[${ext}]}
-
-            # for whatever reason browsers don't work so well with
-            # data sent piecemeal via netcat. We need to send it all
-            # in one big lump. Sticking buffer(1) in front of netcat
-            # worked well, but it broke SSE. So at least for now we're
-            # buffering up in a tempfile.
-            local body=`tempfile`
-            printf "HTTP/1.1 200 OK\r\n" >> ${body}
-            printf "Content-Type: ${type}\r\n" >> ${body}
-            printf "Content-Length: ${length}\r\n\r\n" >> ${body}
-            cat ${file} >> ${body}
-            cat ${body}
-            rm ${body}
+            serve_path "${path}"
             ;;
         /updates)
             handle_updates "$ncpid"
@@ -123,6 +107,27 @@ handle_request() {
             ;;
     esac
     say "Finished handling request" 
+}
+
+serve_path() {
+    local path=$1
+    local file=`basename ${path}`
+    local length=`wc -c < ${file}`
+    local ext=${file##*.}
+    local type=${content_types[${ext}]}
+
+    # for whatever reason browsers don't work so well with
+    # data sent piecemeal via netcat. We need to send it all
+    # in one big lump. Sticking buffer(1) in front of netcat
+    # worked well, but it broke SSE. So at least for now we're
+    # buffering up in a tempfile.
+    local body=`tempfile`
+    printf "HTTP/1.1 200 OK\r\n" >> ${body}
+    printf "Content-Type: ${type}\r\n" >> ${body}
+    printf "Content-Length: ${length}\r\n\r\n" >> ${body}
+    cat ${file} >> ${body}
+    cat ${body}
+    rm ${body}
 }
 
 # There is a nasty chicken/egg problem here. We can't always respond
@@ -156,7 +161,6 @@ get_request_body() {
             say "found terminator"
             break
         fi
-        say "discarding ${key} ${value}"
     done
     if [ -n "${length}" ]; then
         read -N "${length}" body
@@ -174,11 +178,12 @@ handle_post_message() {
     body=`cat | sed "s/'/''/g"`
     cmd="INSERT INTO messages (content) VALUES('${body}');"
     say "${cmd}"
-    echo "${cmd}" | dbexec
-    printf "HTTP/1.1 201 Accepted\r\n\r\n"
+    # gotta be careful what we're putting on stdout
+    echo "${cmd}" | dbexec > /dev/null
+    printf "HTTP/1.1 201 Accepted\r\nContent-Type: application/json\r\n\r\n$(recent_messages_json)"
     for fifo in `ls fifos/subscribers/*`; do
         say "Notifying ${fifo}"
-        echo "ping" > ${fifo}
+        echo "ping" > ${fifo} &
     done
     say "Finished handling message post"
 }
@@ -207,7 +212,7 @@ handle_recent() {
 }
 
 recent_messages_json() {
-    local query="WITH rows AS (SELECT * from messages ORDER BY posted_at LIMIT 10)
+    local query="WITH rows AS (SELECT * from messages ORDER BY posted_at DESC LIMIT 10)
                  SELECT row_to_json(rows) FROM rows;"
     local xform="[ .[] | {id, posted_at, user: .content.user, text: .content.text}]"
     echo "${query}" | dbexec -A -q -t | jq -s -c "${xform}"
@@ -217,16 +222,22 @@ serve_with_coproc() {
     local handler
     local nc
     local pid=$$
+    # starting to think having more than one coproc concurrently is a
+    # terrible idea
     coproc nc ( netcat -C -4 -v -l ${port:-${default_port}} )
+    say "netcat started with pid ${nc_PID}"
     mkpid ${nc_PID}
     handle_request ${nc_PID} <&${nc[0]} >&${nc[1]}
     # close file descriptors
+    say "Closing netcat filehandles"
     eval "exec ${nc[1]}>&-"     
     eval "exec ${nc[0]}<&-"
+    say "Waiting for ${nc_PID} to terminate"
     wait ${nc_PID}
-    say "netcat process ${nc_PID} has finished"
+    say "netcat process has finished"
 }
 
+# We can't afford A-list Actors. But we have John Agar!
 agar() {
     local name=$1
     local args=${@:1}
