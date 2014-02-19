@@ -77,10 +77,12 @@ handle_request() {
     if [ "${path}" == "/" ]; then
         path="/index.html"
     fi
+    if [ -f "public/${path}" ]; then
+        serve_file "${path}"
+        say "Finished handling request" 
+        return
+    fi
     case ${path} in
-        /index.html | /walrus.js | /jquery-1.11.0.min.js)
-            serve_path "${path}"
-            ;;
         /updates)
             handle_updates "$ncpid"
             ;;
@@ -109,9 +111,9 @@ handle_request() {
     say "Finished handling request" 
 }
 
-serve_path() {
+serve_file() {
     local path=$1
-    local file=`basename ${path}`
+    local file="public/${path}"
     local length=`wc -c < ${file}`
     local ext=${file##*.}
     local type=${content_types[${ext}]}
@@ -181,6 +183,7 @@ handle_post_message() {
     # gotta be careful what we're putting on stdout
     echo "${cmd}" | dbexec > /dev/null
     printf "HTTP/1.1 201 Accepted\r\nContent-Type: application/json\r\n\r\n$(recent_messages_json)"
+    # TODO factor this out and maybe use parallel
     for fifo in `ls fifos/subscribers/*`; do
         say "Notifying ${fifo}"
         echo "ping" > ${fifo} &
@@ -247,7 +250,10 @@ agar() {
     fi
     mkfifo ${fifoname}
     say "${name} is starting"
-    self=${name} queue=${fifoname} ${name} ${args[@]} &
+    { 
+        self=${name} queue=${fifoname} ${name} ${args[@]}
+        rm -f ${fifoname}
+    } &
     local pid=$!
     mkpid ${pid}
     say "${name} has started"
@@ -257,14 +263,14 @@ send() {
     local dest=$1
     local message=${*:1}
     say "${dest} <- '${message}'"
-    echo "${dest}" > fifos/${dest}
+    echo "${dest}" > fifos/${dest} &
 }
 
 main() {
     while true; do
-        say "Waiting for connection"
+        say "Starting a new server"
         serve_with_coproc &
-        say "Waiting to start another server"
+        say "Waiting for connection"
         read < ${queue}
     done
 }
