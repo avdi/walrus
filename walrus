@@ -35,7 +35,7 @@ killpids() {
 killfifos() {
     say "Killing FIFOs"
     for fifo in `find fifos -type p`; do
-        closefifo ${fifo}
+        poison_fifo ${fifo}
     done
 }
 
@@ -220,7 +220,7 @@ handle_updates() {
     printf "HTTP/1.1 200 OK\r\n"
     printf "Content-Type: text/event-stream\r\n\r\n"
     mkfifo ${fifo}
-    while read -t 30 message < ${fifo}; do
+    while read_fifo ${fifo} message; do
         say "Subscriber ${fifo} sending client event"
         printf "data: $(recent_messages_json)\n\n"
     done
@@ -247,6 +247,7 @@ serve_with_coproc() {
     local handler
     local nc
     local pid=$$
+    local nc_PID
     # starting to think having more than one coproc concurrently is a
     # terrible idea
     coproc nc ( netcat -C -4 -v -l ${port:-${default_port}} )
@@ -266,15 +267,16 @@ serve_with_coproc() {
 agar() {
     local name=$1
     shift 1
-    local fifoname=fifos/${name}
-    if [ -f ${fifoname} ]; then
-        rm ${fifoname}
-    fi
-    mkfifo ${fifoname}
     say "Spawning actor: ${name}"
     { 
-        say "Starting actor ${name} with command '$*' as PID ${BASHPID}"
+        local fifoname=fifos/${name}-${BASHPID}
+        if [ -f ${fifoname} ]; then
+            rm ${fifoname}
+        fi
+        mkfifo ${fifoname}
+        say "Starting actor ${name} with command '$*' listening on ${fifoname}"
         self=${name} queue=${fifoname} $*
+        say "Actor ${name} has finished, cleaning up FIFO ${fifoname}"
         rm -f ${fifoname}
     } &
     local pid=$!
@@ -284,17 +286,23 @@ agar() {
 
 send() {
     local dest=$1
-    local message=${*:1}
-    say "'${message}' -> ${dest}"
-    echo "${dest}" > fifos/${dest} &
+    shift
+    local fifos=(`ls fifos/${dest}*`)
+    local fifocount=${#fifos[*]}
+    # Pick a random matching FIFO to send to, if there are >1
+    local randfifo=${fifos[$(( ${RANDOM} % ${fifocount} ))]}
+    say "'${*}' -> ${dest} (${randfifo})"
+    # Opening a read/write file descriptor magically makes it possible
+    # to do nonblocking writes to a FIFO
+    ( exec 3<>${randfifo}; echo "$*" >&3; )
 }
 
-closefifo() {
+poison_fifo() {
     say "Poisoning FIFO $1"
-    echo "POISON" > $1
+    echo "POISON" > $1 &
 }
 
-readfifo() {
+read_fifo() {
     fifo=${1:?"FIFO name is required"}
     shift
     firstvar=${1:-REPLY}
@@ -311,9 +319,9 @@ readfifo() {
 main() {
     while true; do
         say "Starting a new server"
-        serve_with_coproc &
+        agar server serve_with_coproc
         say "Waiting for connection"
-        if readfifo ${queue}; then
+        if read_fifo ${queue}; then
             say "Main is continuing"
         else
             say "Main is shutting down"
