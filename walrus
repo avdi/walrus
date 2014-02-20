@@ -20,12 +20,8 @@ while getopts "p:" opt; do
     esac
 done
 
-setup() {
-    echo "Setting up"
-    rm -rf fifos
-    mkdir -p fifos
-    mkdir -p fifos/subscribers
-    mkdir -p pids
+killpids() {
+    say "Killing PIDS"
     for pid in `ls pids`; do
         if ps ${pid} > /dev/null; then
             echo "Killing ${pid}"
@@ -34,7 +30,33 @@ setup() {
         echo "Cleaning up pidfile pids/${pid}"
         rm pids/${pid}
     done
+}
+
+killfifos() {
+    say "Killing FIFOs"
+    for fifo in `find fifos -type p`; do
+        closefifo ${fifo}
+    done
+}
+
+setup() {
+    echo "Setting up"
+    rm -rf fifos
+    mkdir -p fifos
+    mkdir -p fifos/subscribers
+    mkdir -p pids
+    killpids
     setup_schema || exit 1
+}
+
+teardown() {
+    say "Tearing down..."
+    killfifos
+    sleep 1
+    killpids
+    rm -rf fifos
+    rm -rf pids
+    say "Finished tearing down. Goodbye!"
 }
 
 dbexec() {
@@ -243,27 +265,47 @@ serve_with_coproc() {
 # We can't afford A-list Actors. But we have John Agar!
 agar() {
     local name=$1
-    local args=${@:1}
+    shift 1
     local fifoname=fifos/${name}
     if [ -f ${fifoname} ]; then
         rm ${fifoname}
     fi
     mkfifo ${fifoname}
-    say "${name} is starting"
+    say "Spawning actor: ${name}"
     { 
-        self=${name} queue=${fifoname} ${name} ${args[@]}
+        say "Starting actor ${name} with command '$*' as PID ${BASHPID}"
+        self=${name} queue=${fifoname} $*
         rm -f ${fifoname}
     } &
     local pid=$!
     mkpid ${pid}
-    say "${name} has started"
+    say "Spawned actor: ${name}"
 }
 
 send() {
     local dest=$1
     local message=${*:1}
-    say "${dest} <- '${message}'"
+    say "'${message}' -> ${dest}"
     echo "${dest}" > fifos/${dest} &
+}
+
+closefifo() {
+    say "Poisoning FIFO $1"
+    echo "POISON" > $1
+}
+
+readfifo() {
+    fifo=${1:?"FIFO name is required"}
+    shift
+    firstvar=${1:-REPLY}
+    eval "read $*" < ${fifo}
+    say "READ ${fifo}: ${firstvar}=${!firstvar}"
+    if [ "${!firstvar}" == "POISON" ]; then
+        say "FIFO ${fifo} got poisoned!"
+        return 1
+    else
+        return 0
+    fi
 }
 
 main() {
@@ -271,14 +313,23 @@ main() {
         say "Starting a new server"
         serve_with_coproc &
         say "Waiting for connection"
-        read < ${queue}
+        if readfifo ${queue}; then
+            say "Main is continuing"
+        else
+            say "Main is shutting down"
+            break
+        fi
     done
 }
+
+trap teardown EXIT
 
 say "I am the walrus"
 
 setup
 
-agar main
+agar main main
+
+say "Waiting for main to finish"
 
 wait
