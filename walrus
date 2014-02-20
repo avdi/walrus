@@ -60,7 +60,7 @@ teardown() {
 }
 
 dbexec() {
-    psql -p 5433 -f - $* walrus
+    psql -p ${PGPORT:-5432} -f - $* walrus
 }
 
 setup_schema() {
